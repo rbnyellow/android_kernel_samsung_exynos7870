@@ -327,7 +327,7 @@ static int dsim_partial_area_command(struct dsim_device *dsim, void *arg)
 	char data_2b[5];
 	int retry;
 
-	if (!priv->lcdConnected)
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
 		return 0;
 
 	/* w is right & h is bottom */
@@ -1513,6 +1513,14 @@ static int dsim_probe(struct platform_device *pdev)
 		goto err_mem_region;
 	}
 
+	dsim->irq = res->start;
+	ret = devm_request_irq(dev, res->start,
+			dsim_interrupt_handler, 0, pdev->name, dsim);
+	if (ret) {
+		dev_err(dev, "failed to install irq\n");
+		goto err_irq;
+	}
+
 	ret = dsim_register_entity(dsim);
 	if (ret)
 		goto err_irq;
@@ -1551,14 +1559,6 @@ static int dsim_probe(struct platform_device *pdev)
 #else
 	dsim_runtime_resume(dsim->dev);
 #endif
-
-	dsim->irq = res->start;
-	ret = devm_request_irq(dev, res->start,
-			dsim_interrupt_handler, 0, pdev->name, dsim);
-	if (ret) {
-		dev_err(dev, "failed to install irq\n");
-		goto err_irq;
-	}
 
 	/* DPHY init and power on */
 	phy_init(dsim->phy);

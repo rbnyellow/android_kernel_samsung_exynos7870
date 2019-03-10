@@ -5,13 +5,57 @@
 
 static struct mdnie_scr_info scr_info = {
 	.index = 2,
-	.cr = 1,		/* ASCR_WIDE_CR[7:0] */
-	.wr = 19,		/* ASCR_WIDE_WR[7:0] */
-	.wg = 21,		/* ASCR_WIDE_WG[7:0] */
-	.wb = 23		/* ASCR_WIDE_WB[7:0] */
+	.color_blind = 1,	/* ASCR_WIDE_CR[7:0] */
+	.white_r = 19,		/* ASCR_WIDE_WR[7:0] */
+	.white_g = 21,		/* ASCR_WIDE_WG[7:0] */
+	.white_b = 23		/* ASCR_WIDE_WB[7:0] */
 };
 
-static struct mdnie_trans_info trans_info;
+static struct mdnie_trans_info trans_info = {
+	.index = 1,
+	.offset = 1,
+	.enable = 0
+};
+
+static inline int color_offset_f1(int x, int y)
+{
+	return ((y << 10) - (((x << 10) * 99) / 91) - (6 << 10)) >> 10;
+}
+static inline int color_offset_f2(int x, int y)
+{
+	return ((y << 10) - (((x << 10) * 164) / 157) - (8 << 10)) >> 10;
+}
+static inline int color_offset_f3(int x, int y)
+{
+	return ((y << 10) + (((x << 10) * 218) / 39) - (20166 << 10)) >> 10;
+}
+static inline int color_offset_f4(int x, int y)
+{
+	return ((y << 10) + (((x << 10) * 23) / 8) - (11610 << 10)) >> 10;
+}
+
+/* color coordination order is WR, WG, WB */
+static unsigned char coordinate_data_1[] = {
+	0xff, 0xff, 0xff, /* dummy */
+	0xff, 0xff, 0xff, /* Tune_1 */
+	0xff, 0xff, 0xff, /* Tune_2 */
+	0xff, 0xff, 0xff, /* Tune_3 */
+	0xff, 0xff, 0xff, /* Tune_4 */
+	0xff, 0xff, 0xff, /* Tune_5 */
+	0xff, 0xff, 0xff, /* Tune_6 */
+	0xff, 0xff, 0xff, /* Tune_7 */
+	0xff, 0xff, 0xff, /* Tune_8 */
+	0xff, 0xff, 0xff, /* Tune_9 */
+};
+
+static unsigned char *coordinate_data[MODE_MAX] = {
+	coordinate_data_1,
+	coordinate_data_1,
+	coordinate_data_1,
+	coordinate_data_1,
+	coordinate_data_1,
+	coordinate_data_1,
+};
 
 static unsigned char LEVEL_UNLOCK[] = {
 	0xF0,
@@ -1830,146 +1874,6 @@ static char COLOR_ADJUSTMENT_MDNIE_6[] ={
 //end
 };
 
-static char LIGHT_NOTIFICATION_1[] ={
-//start
-0xE8,
-0x00, //roi0 x start
-0x00,
-0x00, //roi0 x end
-0x00,
-0x00, //roi0 y start
-0x00,
-0x00, //roi0 y end
-0x00,
-0x00, //roi1 x strat
-0x00,
-0x00, //roi1 x end
-0x00,
-0x00, //roi1 y start
-0x00,
-0x00, //roi1 y end
-0x00,
-};
-
-static char LIGHT_NOTIFICATION_2[] ={
-0xE9,
-0x66, //scr Cr Yb
-0xff, //scr Rr Bb
-0xf9, //scr Cg Yg
-0x60, //scr Rg Bg
-0xac, //scr Cb Yr
-0x13, //scr Rb Br
-0xff, //scr Mr Mb
-0x66, //scr Gr Gb
-0x60, //scr Mg Mg
-0xf9, //scr Gg Gg
-0xac, //scr Mb Mr
-0x13, //scr Gb Gr
-0xff, //scr Yr Cb
-0x66, //scr Br Rb
-0xf9, //scr Yg Cg
-0x60, //scr Bg Rg
-0x13, //scr Yb Cr
-0xac, //scr Bb Rr
-0xff, //scr Wr Wb
-0x66, //scr Kr Kb
-0xf9, //scr Wg Wg
-0x60, //scr Kg Kg
-0xac, //scr Wb Wr
-0x13, //scr Kb Kr
-};
-
-static char LIGHT_NOTIFICATION_3[] ={
-0xEA,
-0x00, //curve 1 b
-0x20, //curve 1 a
-0x00, //curve 2 b
-0x20, //curve 2 a
-0x00, //curve 3 b
-0x20, //curve 3 a
-0x00, //curve 4 b
-0x20, //curve 4 a
-0x00, //curve 5 b
-0x20, //curve 5 a
-0x00, //curve 6 b
-0x20, //curve 6 a
-0x00, //curve 7 b
-0x20, //curve 7 a
-0x00, //curve 8 b
-0x20, //curve 8 a
-0x00, //curve 9 b
-0x20, //curve 9 a
-0x00, //curve10 b
-0x20, //curve10 a
-0x00, //curve11 b
-0x20, //curve11 a
-0x00, //curve12 b
-0x20, //curve12 a
-};
-
-static char LIGHT_NOTIFICATION_4[] ={
-0xEB,
-0x00, //curve13 b
-0x20, //curve13 a
-0x00, //curve14 b
-0x20, //curve14 a
-0x00, //curve15 b
-0x20, //curve15 a
-0x00, //curve16 b
-0x20, //curve16 a
-0x00, //curve17 b
-0x20, //curve17 a
-0x00, //curve18 b
-0x20, //curve18 a
-0x00, //curve19 b
-0x20, //curve19 a
-0x00, //curve20 b
-0x20, //curve20 a
-0x00, //curve21 b
-0x20, //curve21 a
-0x00, //curve22 b
-0x20, //curve22 a
-0x00, //curve23 b
-0x20, //curve23 a
-0x00, //curve24 b
-0xFF, //curve24 a
-};
-
-static char LIGHT_NOTIFICATION_5[] ={
-0xEC,
-0x04, //cc r1
-0x00,
-0x00, //cc r2
-0x00,
-0x00, //cc r3
-0x00,
-0x00, //cc g1
-0x00,
-0x04, //cc g2
-0x00,
-0x00, //cc g3
-0x00,
-0x00, //cc b1
-0x00,
-0x00, //cc b2
-0x00,
-0x04, //cc b3
-0x00,
-};
-
-static char LIGHT_NOTIFICATION_6[] ={
-0xE7,
-0x08, //roi_ctrl rgb_if_type mdnie_en mask 00 00 0 000
-0x30, //scr_roi 1 scr algo_roi 1 algo 00 1 0 00 1 0
-0x03, //HSIZE
-0x00,
-0x04, //VSIZE
-0x00,
-0x00, //sharpen cc gamma 00 0 0
-//end
-};
-
-
 #define MDNIE_SET(id)	\
 {							\
 	.name		= #id,				\
@@ -1986,15 +1890,11 @@ static char LIGHT_NOTIFICATION_6[] ={
 	}	\
 }
 
-static struct mdnie_table bypass_table[BYPASS_MAX] = {
+struct mdnie_table bypass_table[BYPASS_MAX] = {
 	[BYPASS_ON] = MDNIE_SET(BYPASS)
 };
 
-struct mdnie_table light_notification_table[LIGHT_NOTIFICATION_MAX] = {
-	[LIGHT_NOTIFICATION_ON] = MDNIE_SET(LIGHT_NOTIFICATION)
-};
-
-static struct mdnie_table accessibility_table[ACCESSIBILITY_MAX] = {
+struct mdnie_table accessibility_table[ACCESSIBILITY_MAX] = {
 	[NEGATIVE] = MDNIE_SET(NEGATIVE),
 	MDNIE_SET(COLOR_ADJUSTMENT_MDNIE),
 	MDNIE_SET(UI),
@@ -2002,7 +1902,7 @@ static struct mdnie_table accessibility_table[ACCESSIBILITY_MAX] = {
 	MDNIE_SET(GRAYSCALE_NEGATIVE)
 };
 
-static struct mdnie_table main_table[SCENARIO_MAX][MODE_MAX] = {
+struct mdnie_table main_table[SCENARIO_MAX][MODE_MAX] = {
 	{
 		MDNIE_SET(UI),
 		MDNIE_SET(UI),
@@ -2063,17 +1963,24 @@ static struct mdnie_table main_table[SCENARIO_MAX][MODE_MAX] = {
 		MDNIE_SET(EMAIL),
 	}
 };
-
 #undef MDNIE_SET
 
 static struct mdnie_tune tune_info = {
 	.bypass_table = bypass_table,
 	.accessibility_table = accessibility_table,
-	.light_notification_table = light_notification_table,
+	.hbm_table = NULL,
+	.night_table = NULL,
+	.dmb_table = NULL,
 	.main_table = main_table,
 
+	.coordinate_table = coordinate_data,
+	.adjust_ldu_table = NULL,
+	.night_mode_table = NULL,
+	.max_adjust_ldu = 6,
 	.scr_info = &scr_info,
 	.trans_info = &trans_info,
+	.night_info = NULL,
+	.color_offset = {NULL, color_offset_f1, color_offset_f2, color_offset_f3, color_offset_f4}
 };
 
 #endif

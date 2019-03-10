@@ -22,7 +22,6 @@
 #include "../decon_notify.h"
 
 #include "td4300_param.h"
-#include "backlight_tuning.h"
 
 #if defined(CONFIG_EXYNOS_DECON_MDNIE_LITE)
 #include "mdnie.h"
@@ -38,7 +37,7 @@
 #endif
 
 #define DSI_WRITE(cmd, size)		do {				\
-	ret |= dsim_write_hl_data(lcd, cmd, size);			\
+	ret = dsim_write_hl_data(lcd, cmd, size);			\
 	if (ret < 0) {							\
 		dev_err(&lcd->ld->dev, "%s: failed to write %s\n", __func__, #cmd);	\
 		ret = -EPERM;						\
@@ -47,7 +46,7 @@
 } while (0)
 
 #define DSI_WRITE_G(cmd, size)		do {				\
-	ret |= dsim_write_hl_data_generic(lcd, cmd, size);			\
+	ret = dsim_write_hl_data_generic(lcd, cmd, size);			\
 	if (ret < 0) {							\
 		dev_err(&lcd->ld->dev, "%s: failed to write %s\n", __func__, #cmd); \
 		ret = -EPERM;						\
@@ -64,10 +63,7 @@ struct lcd_info {
 	struct lcd_device		*ld;
 	struct backlight_device		*bd;
 
-	union {
-		u32			value;
-		unsigned char		id[TD4300_ID_LEN];
-	} id_info;
+	unsigned char			id[3];
 	unsigned char			dump_info[3];
 	unsigned int 			data_type;
 
@@ -82,22 +78,22 @@ struct lcd_info {
 	struct kobj_attribute		dsi_access_w;
 
 	struct notifier_block		fb_notif_panel;
-	struct i2c_client		*backlight_client;
 };
 
+struct i2c_client *backlight_client;
 
-static int ISL98611_array_write(struct lcd_info *lcd, const struct ISL98611_rom_data *eprom_ptr, int eprom_size)
+static int ISL98611_array_write(const struct ISL98611_rom_data *eprom_ptr, int eprom_size)
 {
 	int i = 0;
 	int ret = 0;
 
-	if (!lcd->backlight_client)
+	if (!backlight_client)
 		return 0;
 
 	for (i = 0; i < eprom_size; i++) {
-		ret = i2c_smbus_write_byte_data(lcd->backlight_client, eprom_ptr[i].addr, eprom_ptr[i].val);
+		ret = i2c_smbus_write_byte_data(backlight_client, eprom_ptr[i].addr, eprom_ptr[i].val);
 		if (ret < 0)
-			dev_err(&lcd->ld->dev, "%s: fail. %d, %2x, %2x\n", __func__, ret, eprom_ptr[i].addr, eprom_ptr[i].val);
+			dsim_err("%s: error : BL DEVICE_CTRL setting fail\n", __func__);
 	}
 
 	return ret;
@@ -106,29 +102,17 @@ static int ISL98611_array_write(struct lcd_info *lcd, const struct ISL98611_rom_
 static int isl98611_probe(struct i2c_client *client,
 	const struct i2c_device_id *id)
 {
-	struct lcd_info *lcd = NULL;
 	int ret = 0;
 
-	if (id && id->driver_data)
-		lcd = (struct lcd_info *)id->driver_data;
-
-	if (!lcd) {
-		dsim_err("%s: failed to find driver_data for lcd\n", __func__);
-		ret = -EINVAL;
-		goto exit;
-	}
-
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_I2C)) {
-		dev_err(&lcd->ld->dev, "%s: need I2C_FUNC_I2C\n", __func__);
+		dsim_err("need I2C_FUNC_I2C.\n");
 		ret = -ENODEV;
-		goto exit;
+		goto err_i2c;
 	}
 
-	i2c_set_clientdata(client, lcd);
+	backlight_client = client;
 
-	lcd->backlight_client = client;
-
-exit:
+err_i2c:
 	return ret;
 }
 
@@ -140,7 +124,7 @@ static struct i2c_device_id isl98611_id[] = {
 MODULE_DEVICE_TABLE(i2c, isl98611_id);
 
 static struct of_device_id isl98611_i2c_dt_ids[] = {
-	{ .compatible = "i2c,isl98611" },
+	{ .compatible = "isl98611,i2c" },
 	{ }
 };
 
@@ -158,12 +142,14 @@ static struct i2c_driver isl98611_i2c_driver = {
 
 static int dsim_write_hl_data(struct lcd_info *lcd, const u8 *cmd, u32 cmdSize)
 {
-	int ret = 0;
-	int retry = 5;
+	int ret;
+	int retry;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
-		return ret;
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
+		return cmdSize;
+
+	retry = 5;
 
 try_write:
 	if (cmdSize == 1)
@@ -185,12 +171,14 @@ try_write:
 
 static int dsim_write_hl_data_generic(struct lcd_info *lcd, const u8 *cmd, u32 cmdSize)
 {
-	int ret = 0;
-	int retry = 5;
+	int ret;
+	int retry;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
-		return ret;
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
+		return cmdSize;
+
+	retry = 5;
 
 try_write:
 	if (cmdSize == 1)
@@ -212,11 +200,11 @@ try_write:
 
 static int dsim_read_hl_data(struct lcd_info *lcd, u8 addr, u32 size, u8 *buf)
 {
-	int ret = 0;
-	int retry = 2;
+	int ret;
+	int retry = 4;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
 		return size;
 
 	DSI_WRITE_G(SEQ_TD4300_B0, ARRAY_SIZE(SEQ_TD4300_B0));
@@ -314,17 +302,17 @@ static int td4300_read_init_info(struct lcd_info *lcd)
 	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
 	if (lcdtype == 0) {
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		goto read_exit;
 	}
 
-	lcd->id_info.id[0] = (lcdtype & 0xFF0000) >> 16;
-	lcd->id_info.id[1] = (lcdtype & 0x00FF00) >> 8;
-	lcd->id_info.id[2] = (lcdtype & 0x0000FF) >> 0;
+	lcd->id[0] = (lcdtype & 0xFF0000) >> 16;
+	lcd->id[1] = (lcdtype & 0x00FF00) >> 8;
+	lcd->id[2] = (lcdtype & 0x0000FF) >> 0;
 
 	dev_info(&lcd->ld->dev, "READ ID : ");
 	for (i = 0; i < TD4300_ID_LEN; i++)
-		dev_info(&lcd->ld->dev, "%02x, ", lcd->id_info.id[i]);
+		dev_info(&lcd->ld->dev, "%02x, ", lcd->id[i]);
 	dev_info(&lcd->ld->dev, "\n");
 
 read_exit:
@@ -337,20 +325,20 @@ static int td4300_read_id(struct lcd_info *lcd)
 	u8 buf[3] = {0, };
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	priv->lcdConnected = 1;
+	priv->lcdConnected = PANEL_CONNECTED;
 
 	ret = dsim_read_hl_data(lcd, TD4300_ID_REG, 1, (u8 *)&buf[0]);
 	ret = dsim_read_hl_data(lcd, TD4300_ID_REG + 1, 1, (u8 *)&buf[1]);
 	ret = dsim_read_hl_data(lcd, TD4300_ID_REG + 2, 1, (u8 *)&buf[2]);
 
 	if (ret <= 0)
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 
-	lcd->id_info.id[0] = buf[0];
-	lcd->id_info.id[1] = buf[1];
-	lcd->id_info.id[2] = buf[2];
+	lcd->id[0] = buf[0];
+	lcd->id[1] = buf[1];
+	lcd->id[2] = buf[2];
 
-	dev_info(&lcd->ld->dev, "%s: %d, 0x%02x 0x%02x 0x%02x\n", __func__, ret, lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	dsim_info("%s %d : 0x%02x 0x%02x 0x%02x\n", __func__, ret, lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return ret;
 }
@@ -517,7 +505,7 @@ static int td4300_probe(struct dsim_device *dsim)
 
 	dev_info(&lcd->ld->dev, "%s: was called\n", __func__);
 
-	priv->lcdConnected = 1;
+	priv->lcdConnected = PANEL_CONNECTED;
 
 	lcd->bd->props.max_brightness = EXTEND_BRIGHTNESS;
 	lcd->bd->props.brightness = UI_DEFAULT_BRIGHTNESS;
@@ -527,8 +515,8 @@ static int td4300_probe(struct dsim_device *dsim)
 	lcd->lux = -1;
 
 	td4300_read_init_info(lcd);
-	if (!priv->lcdConnected) {
-		dev_err(&lcd->ld->dev, "%s: lcd was not connected\n", __func__);
+	if (priv->lcdConnected == PANEL_DISCONNEDTED) {
+		dev_err(&lcd->ld->dev, "dsim : %s lcd was not connected\n", __func__);
 		goto exit;
 	}
 
@@ -540,7 +528,6 @@ static int td4300_probe(struct dsim_device *dsim)
 	incell_data.blank_unblank = incell_blank_unblank;
 #endif
 
-	isl98611_id->driver_data = (kernel_ulong_t)lcd;
 	i2c_add_driver(&isl98611_i2c_driver);
 
 	dev_info(&lcd->ld->dev, "%s: done\n", __func__);
@@ -554,7 +541,7 @@ static ssize_t lcd_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "BOE_%02X%02X%02X\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "BOE_%02X%02X%02X\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -564,7 +551,7 @@ static ssize_t window_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "%x %x %x\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "%x %x %x\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -909,14 +896,13 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 	mutex_init(&lcd->lock);
 
 	ret = td4300_probe(dsim);
-	if (ret < 0) {
+	if (ret) {
 		dev_err(&lcd->ld->dev, "%s: failed to probe panel\n", __func__);
 		goto probe_err;
 	}
 
 #if defined(CONFIG_EXYNOS_DECON_LCD_SYSFS)
 	lcd_init_sysfs(lcd);
-	init_bl_curve_debugfs(lcd->bd, NULL, &lcd->backlight_client);
 #endif
 
 #if defined(CONFIG_EXYNOS_DECON_MDNIE_LITE)
@@ -940,13 +926,13 @@ static int dsim_panel_prepare(struct dsim_device *dsim)
 	/* VSP VSN setting, So, It should be called before power enabling */
 
 #if defined(CONFIG_SEC_FACTORY)
-	ret = ISL98611_array_write(lcd, ISL98611_RESET, ARRAY_SIZE(ISL98611_RESET));
+	ret = ISL98611_array_write(ISL98611_RESET, ARRAY_SIZE(ISL98611_RESET));
 	if (ret < 0)
 		dev_err(&lcd->ld->dev, "%s: error : BL DEVICE_CTRL reset fail\n", __func__);
 	msleep(100);
 	dev_info(&lcd->ld->dev, "%s: BLIC_RESET\n", __func__);
 #else
-	ret = ISL98611_array_write(lcd, ISL98611_INIT, ARRAY_SIZE(ISL98611_INIT));
+	ret = ISL98611_array_write(ISL98611_INIT, ARRAY_SIZE(ISL98611_INIT));
 	if (ret < 0)
 		dev_err(&lcd->ld->dev, "%s: error : BL DEVICE_CTRL setting fail\n", __func__);
 	dev_info(&lcd->ld->dev, "%s: BLIC_Configuration\n", __func__);

@@ -32,10 +32,7 @@
 struct lcd_info {
 	struct lcd_device *ld;
 	struct backlight_device *bd;
-	union {
-		u32			value;
-		unsigned char		id[S6E8AA5X01_ID_LEN];
-	} id_info;
+	unsigned char id[3];
 	unsigned char code[5];
 	unsigned char tset[8];
 	unsigned char elvss[4];
@@ -78,12 +75,14 @@ struct lcd_info {
 
 static int dsim_write_hl_data(struct lcd_info *lcd, const u8 *cmd, u32 cmdSize)
 {
-	int ret = 0;
-	int retry = 5;
+	int ret;
+	int retry;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
-		return ret;
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
+		return cmdSize;
+
+	retry = 5;
 
 try_write:
 	if (cmdSize == 1)
@@ -105,11 +104,11 @@ try_write:
 
 static int dsim_read_hl_data(struct lcd_info *lcd, u8 addr, u32 size, u8 *buf)
 {
-	int ret = 0;
+	int ret;
 	int retry = 4;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
 		return size;
 
 try_read:
@@ -731,7 +730,7 @@ static int s6e8aa5x01_read_init_info(struct lcd_info *lcd, unsigned char *mtp)
 	unsigned char bufForCoordi[S6E8AA5X01_COORDINATE_LEN] = {0,};
 	unsigned char buf[S6E8AA5X01_MTP_DATE_SIZE] = {0, };
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
 	ret = dsim_write_hl_data(lcd, SEQ_TEST_KEY_ON_F0, ARRAY_SIZE(SEQ_TEST_KEY_ON_F0));
 	if (ret < 0)
@@ -739,16 +738,16 @@ static int s6e8aa5x01_read_init_info(struct lcd_info *lcd, unsigned char *mtp)
 
 	/* id */
 	msleep(1);
-	ret = dsim_read_hl_data(lcd, S6E8AA5X01_ID_REG, S6E8AA5X01_ID_LEN, lcd->id_info.id);
+	ret = dsim_read_hl_data(lcd, S6E8AA5X01_ID_REG, S6E8AA5X01_ID_LEN, lcd->id);
 	if (ret != S6E8AA5X01_ID_LEN) {
 		dev_err(&lcd->ld->dev, "%s: can't find connected panel. check panel connection\n", __func__);
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		goto read_exit;
 	}
 
 	dev_info(&lcd->ld->dev, "READ ID : ");
 	for (i = 0; i < S6E8AA5X01_ID_LEN; i++)
-		dev_info(&lcd->ld->dev, "%02x, ", lcd->id_info.id[i]);
+		dev_info(&lcd->ld->dev, "%02x, ", lcd->id[i]);
 	dev_info(&lcd->ld->dev, "\n");
 
 	/* chip id */
@@ -756,7 +755,7 @@ static int s6e8aa5x01_read_init_info(struct lcd_info *lcd, unsigned char *mtp)
 	ret = dsim_read_hl_data(lcd, S6E8AA5X01_CHIP_ID_REG, S6E8AA5X01_CHIP_ID_LEN, lcd->chip_id);
 	if (ret != S6E8AA5X01_CHIP_ID_LEN) {
 		dev_err(&lcd->ld->dev, "%s: can't find connected panel. check panel connection\n", __func__);
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		goto read_exit;
 	}
 
@@ -895,7 +894,7 @@ static int s6e8aa5x01_displayon(struct lcd_info *lcd)
 {
 	int ret = 0;
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
 	ret = dsim_write_hl_data(lcd, SEQ_DISPLAY_ON, ARRAY_SIZE(SEQ_DISPLAY_ON));
 	if (ret < 0) {
@@ -911,7 +910,7 @@ static int s6e8aa5x01_exit(struct lcd_info *lcd)
 {
 	int ret = 0;
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 	ret = dsim_write_hl_data(lcd, SEQ_DISPLAY_OFF, ARRAY_SIZE(SEQ_DISPLAY_OFF));
 	if (ret < 0) {
 		dev_err(&lcd->ld->dev, "%s: failed to write CMD : DISPLAY_OFF\n", __func__);
@@ -937,7 +936,7 @@ static int s6e8aa5x01_init(struct lcd_info *lcd)
 	int ret = 0;
 	int i = 0;
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
 	usleep_range(5000, 6000);
 
@@ -955,14 +954,14 @@ static int s6e8aa5x01_init(struct lcd_info *lcd)
 
 	msleep(20);
 
-	ret = dsim_read_hl_data(lcd, S6E8AA5X01_ID_REG, S6E8AA5X01_ID_LEN, lcd->id_info.id);
+	ret = dsim_read_hl_data(lcd, S6E8AA5X01_ID_REG, S6E8AA5X01_ID_LEN, lcd->id);
 	if (ret != S6E8AA5X01_ID_LEN) {
 		dev_err(&lcd->ld->dev, "%s: can't find connected panel. check panel connection\n", __func__);
 	}
 
 	dev_info(&lcd->ld->dev, "READ ID : ");
 	for (i = 0; i < S6E8AA5X01_ID_LEN; i++)
-		dev_info(&lcd->ld->dev, "%02x, ", lcd->id_info.id[i]);
+		dev_info(&lcd->ld->dev, "%02x, ", lcd->id[i]);
 	dev_info(&lcd->ld->dev, "\n");
 
 	/* 2. Brightness Setting */
@@ -1044,9 +1043,9 @@ static int s6e8aa5x01_probe(struct dsim_device *dsim)
 	struct lcd_info *lcd = dsim->priv.par;
 	unsigned char mtp[S6E8AA5X01_MTP_DATE_SIZE] = {0, };
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
-	priv->lcdConnected = 1;
+	priv->lcdConnected = PANEL_CONNECTED;
 
 	lcd->bd->props.max_brightness = EXTEND_BRIGHTNESS;
 	lcd->bd->props.brightness = UI_DEFAULT_BRIGHTNESS;
@@ -1063,8 +1062,8 @@ static int s6e8aa5x01_probe(struct dsim_device *dsim)
 	lcd->lux = -1;
 
 	s6e8aa5x01_read_init_info(lcd, mtp);
-	if (!priv->lcdConnected) {
-		dev_err(&lcd->ld->dev, "%s: lcd was not connected\n", __func__);
+	if (priv->lcdConnected == PANEL_DISCONNEDTED) {
+		dev_err(&lcd->ld->dev, "dsim : %s lcd was not connected\n", __func__);
 		goto probe_exit;
 	}
 
@@ -1086,7 +1085,7 @@ static ssize_t lcd_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "SDC_%02X%02X%02X\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "SDC_%02X%02X%02X\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -1096,7 +1095,7 @@ static ssize_t window_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "%x %x %x\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "%x %x %x\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -1354,11 +1353,6 @@ static ssize_t dump_register_show(struct device *dev,
 		else
 			ret = dsim_read_hl_data(lcd, reg, len, dump);
 
-		if (ret < 0) {
-			dev_err(&lcd->ld->dev, "%s: failed to read, %x, %d, %d\n", __func__, reg, len, offset);
-			goto exit;
-		}
-
 		if (dsim_write_hl_data(lcd, SEQ_TEST_KEY_OFF_FC, ARRAY_SIZE(SEQ_TEST_KEY_OFF_FC)) < 0)
 			dev_err(&lcd->ld->dev, "failed to write test off fc command.\n");
 		if (dsim_write_hl_data(lcd, SEQ_TEST_KEY_OFF_F0, ARRAY_SIZE(SEQ_TEST_KEY_OFF_F0)) < 0)
@@ -1387,7 +1381,7 @@ static ssize_t dump_register_store(struct device *dev,
 	unsigned int reg, len, offset;
 	int ret;
 
-	ret = sscanf(buf, "%8x %8d %8d", &reg, &len, &offset);
+	ret = sscanf(buf, "%x %d %d", &reg, &len, &offset);
 
 	if (ret == 2)
 		offset = 0;
@@ -1606,7 +1600,7 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 	mutex_init(&lcd->lock);
 
 	ret = s6e8aa5x01_probe(dsim);
-	if (ret < 0) {
+	if (ret) {
 		dev_err(&lcd->ld->dev, "%s: failed to probe panel\n", __func__);
 		goto probe_err;
 	}

@@ -28,10 +28,7 @@
 struct lcd_info {
 	struct lcd_device *ld;
 	struct backlight_device *bd;
-	union {
-		u32			value;
-		unsigned char		id[EA8061_ID_LEN];
-	} id_info;
+	unsigned char id[3];
 	unsigned char code[5];
 	unsigned char tset[8];
 	unsigned char elvss[4];
@@ -64,12 +61,14 @@ struct lcd_info {
 
 static int dsim_write_hl_data(struct lcd_info *lcd, const u8 *cmd, u32 cmdSize)
 {
-	int ret = 0;
-	int retry = 5;
+	int ret;
+	int retry;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
-		return ret;
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
+		return cmdSize;
+
+	retry = 5;
 
 try_write:
 	if (cmdSize == 1)
@@ -91,11 +90,11 @@ try_write:
 
 static int dsim_read_hl_data(struct lcd_info *lcd, u8 addr, u32 size, u8 *buf)
 {
-	int ret = 0;
+	int ret;
 	int retry = 4;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
 		return size;
 
 try_read:
@@ -117,19 +116,19 @@ static int ea8061_read_id(struct lcd_info *lcd)
 	int ret = 0;
 	int i = 0;
 
-	priv->lcdConnected = 1;
+	priv->lcdConnected = PANEL_CONNECTED;
 
 	dsim_write_hl_data(lcd, SEQ_EA8061_READ_ID, ARRAY_SIZE(SEQ_EA8061_READ_ID));
-	ret = dsim_read_hl_data(lcd, EA8061_READ_RX_REG, EA8061_ID_LEN, lcd->id_info.id);
+	ret = dsim_read_hl_data(lcd, EA8061_READ_RX_REG, EA8061_ID_LEN, lcd->id);
 	if (ret != EA8061_ID_LEN) {
 		dev_err(&lcd->ld->dev, "%s: can't find connected panel. check panel connection\n", __func__);
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		goto exit;
 	}
 
 	dev_info(&lcd->ld->dev, "READ ID : ");
 	for (i = 0; i < EA8061_ID_LEN; i++)
-		dev_info(&lcd->ld->dev, "%02x, ", lcd->id_info.id[i]);
+		dev_info(&lcd->ld->dev, "%02x, ", lcd->id[i]);
 	dev_info(&lcd->ld->dev, "\n");
 
 exit:
@@ -707,19 +706,19 @@ static int ea8061_read_init_info(struct lcd_info *lcd, unsigned char *mtp)
 	struct panel_private *priv = &lcd->dsim->priv;
 	unsigned char buf[60] = {0, };
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
 	dsim_write_hl_data(lcd, SEQ_EA8061_READ_ID, ARRAY_SIZE(SEQ_EA8061_READ_ID));
-	ret = dsim_read_hl_data(lcd, EA8061_READ_RX_REG, EA8061_ID_LEN, lcd->id_info.id);
+	ret = dsim_read_hl_data(lcd, EA8061_READ_RX_REG, EA8061_ID_LEN, lcd->id);
 	if (ret != EA8061_ID_LEN) {
 		dev_err(&lcd->ld->dev, "%s: can't find connected panel. check panel connection\n", __func__);
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		goto read_exit;
 	}
 
 	dev_info(&lcd->ld->dev, "READ ID : ");
 	for (i = 0; i < EA8061_ID_LEN; i++)
-		dev_info(&lcd->ld->dev, "%02x, ", lcd->id_info.id[i]);
+		dev_info(&lcd->ld->dev, "%02x, ", lcd->id[i]);
 	dev_info(&lcd->ld->dev, "\n");
 
 	ret = dsim_write_hl_data(lcd, SEQ_TEST_KEY_ON_F0, ARRAY_SIZE(SEQ_TEST_KEY_ON_F0));
@@ -777,7 +776,7 @@ static int ea8061_displayon(struct lcd_info *lcd)
 {
 	int ret = 0;
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
 	goto displayon_err;
 
@@ -791,7 +790,7 @@ static int ea8061_exit(struct lcd_info *lcd)
 {
 	int ret = 0;
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 	ret = dsim_write_hl_data(lcd, SEQ_DISPLAY_OFF, ARRAY_SIZE(SEQ_DISPLAY_OFF));
 	if (ret < 0) {
 		dev_err(&lcd->ld->dev, "%s: failed to write CMD : DISPLAY_OFF\n", __func__);
@@ -816,7 +815,7 @@ static int ea8061_init(struct lcd_info *lcd)
 {
 	int ret;
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
 	usleep_range(5000, 6000);
 
@@ -892,9 +891,9 @@ static int ea8061_probe(struct dsim_device *dsim)
 	struct lcd_info *lcd = dsim->priv.par;
 	unsigned char mtp[EA8061_MTP_SIZE] = {0, };
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
-	priv->lcdConnected = 1;
+	priv->lcdConnected = PANEL_CONNECTED;
 	lcd->bd->props.max_brightness = EXTEND_BRIGHTNESS;
 	lcd->bd->props.brightness = UI_DEFAULT_BRIGHTNESS;
 	lcd->dsim = dsim;
@@ -906,8 +905,8 @@ static int ea8061_probe(struct dsim_device *dsim)
 	lcd->current_hbm = 0;
 
 	ret = ea8061_read_init_info(lcd, mtp);
-	if (!priv->lcdConnected) {
-		dev_err(&lcd->ld->dev, "%s: lcd was not connected\n", __func__);
+	if (priv->lcdConnected == PANEL_DISCONNEDTED) {
+		dev_err(&lcd->ld->dev, "dsim : %s lcd was not connected\n", __func__);
 		goto probe_exit;
 	}
 
@@ -927,7 +926,7 @@ static ssize_t lcd_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "SDC_%02X%02X%02X\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "SDC_%02X%02X%02X\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -937,7 +936,7 @@ static ssize_t window_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "%x %x %x\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "%x %x %x\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -1300,7 +1299,7 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 	mutex_init(&lcd->lock);
 
 	ret = ea8061_probe(dsim);
-	if (ret < 0) {
+	if (ret) {
 		dev_err(&lcd->ld->dev, "%s: failed to probe panel\n", __func__);
 		goto probe_err;
 	}

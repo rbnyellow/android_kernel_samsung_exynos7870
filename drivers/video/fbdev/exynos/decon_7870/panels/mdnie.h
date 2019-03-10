@@ -39,12 +39,6 @@ enum BYPASS {
 	BYPASS_MAX
 };
 
-enum LIGHT_NOTIFICATION {
-	LIGHT_NOTIFICATION_OFF,
-	LIGHT_NOTIFICATION_ON,
-	LIGHT_NOTIFICATION_MAX
-};
-
 enum ACCESSIBILITY {
 	ACCESSIBILITY_OFF,
 	NEGATIVE,
@@ -52,6 +46,7 @@ enum ACCESSIBILITY {
 	SCREEN_CURTAIN,
 	GRAYSCALE,
 	GRAYSCALE_NEGATIVE,
+	COLOR_BLIND_HBM,
 	ACCESSIBILITY_MAX
 };
 
@@ -100,10 +95,10 @@ struct mdnie_table {
 
 struct mdnie_scr_info {
 	u32 index;
-	u32 cr;
-	u32 wr;
-	u32 wg;
-	u32 wb;
+	u32 color_blind;	/* Cyan Red */
+	u32 white_r;
+	u32 white_g;
+	u32 white_b;
 };
 
 struct mdnie_trans_info {
@@ -113,13 +108,12 @@ struct mdnie_trans_info {
 };
 
 struct mdnie_night_info {
-	u32 max_w;
-	u32 max_h;
+	u32 index_max_num;
+	u32 index_size;
 };
 
 struct mdnie_tune {
 	struct mdnie_table	*bypass_table;
-	struct mdnie_table	*light_notification_table;
 	struct mdnie_table	*accessibility_table;
 	struct mdnie_table	*hbm_table;
 	struct mdnie_table	*hmt_table;
@@ -131,16 +125,11 @@ struct mdnie_tune {
 	struct mdnie_trans_info	*trans_info;
 	struct mdnie_night_info	*night_info;
 	unsigned char **coordinate_table;
-	unsigned char **adjust_ldu_table;
 	unsigned char *night_mode_table;
+	unsigned char **adjust_ldu_table;
+	unsigned int max_adjust_ldu;
 	int (*get_hbm_index)(int);
 	int (*color_offset[])(int, int);
-};
-
-struct rgb_info {
-	int r;
-	int g;
-	int b;
 };
 
 struct mdnie_ops {
@@ -167,12 +156,10 @@ struct mdnie_info {
 	enum HBM		hbm;
 	enum hmt_mode		hmt_mode;
 	enum NIGHT_MODE	night_mode;
-	enum LIGHT_NOTIFICATION		light_notification;
 
 	unsigned int		tuning;
 	unsigned int		accessibility;
 	unsigned int		color_correction;
-	unsigned int		coordinate[2];
 
 	char			path[50];
 
@@ -184,24 +171,28 @@ struct mdnie_info {
 #ifdef CONFIG_DISPLAY_USE_INFO
 	struct notifier_block	dpui_notif;
 #endif
-
-	struct rgb_info		wrgb_current;
-	struct rgb_info		wrgb_default;
-	struct rgb_info		wrgb_balance;
-	struct rgb_info		wrgb_ldu;
-
+	unsigned int white_r;
+	unsigned int white_g;
+	unsigned int white_b;
+	int white_default_r;
+	int white_default_g;
+	int white_default_b;
+	int white_balance_r;
+	int white_balance_g;
+	int white_balance_b;
+	int white_ldu_r;
+	int white_ldu_g;
+	int white_ldu_b;
 	unsigned int disable_trans_dimming;
 	unsigned int night_mode_level;
 	unsigned int ldu;
 
 	struct mdnie_table table_buffer;
 	mdnie_t sequence_buffer[256];
+	u16 coordinate[2];
 };
 
-extern int mdnie_calibration(int *r);
-extern int mdnie_open_file(const char *path, char **fp);
 extern int mdnie_register(struct device *p, void *data, mdnie_w w, mdnie_r r, unsigned int *coordinate, struct mdnie_tune *tune);
-extern uintptr_t mdnie_request_table(char *path, struct mdnie_table *s);
 extern ssize_t attr_store_for_each(struct class *cls, const char *name, const char *buf, size_t size);
 extern struct class *get_mdnie_class(void);
 

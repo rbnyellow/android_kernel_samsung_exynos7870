@@ -29,7 +29,7 @@
 #define IS_ALPM_SUPPORTED(lcd_id) (lcd_id >= 0x02) ? 1:0
 
 #define DSI_WRITE(cmd, size)		do {				\
-	ret |= dsim_write_hl_data(lcd, cmd, size);			\
+	ret = dsim_write_hl_data(lcd, cmd, size);			\
 	if (ret < 0) {							\
 		dev_err(&lcd->ld->dev, "%s: failed to write %s\n", __func__, #cmd);	\
 		ret = -EPERM;						\
@@ -109,10 +109,7 @@ struct lcd_info {
 	int				temperature;
 	unsigned int			temperature_index;
 
-	union {
-		u32			value;
-		unsigned char		id[LDI_LEN_ID];
-	} id_info;
+	unsigned char			id[LDI_LEN_ID];
 	unsigned char			code[LDI_LEN_CHIP_ID];
 	unsigned char			date[LDI_LEN_DATE];
 	unsigned int			coordinate[2];
@@ -158,12 +155,14 @@ static int pinctrl_enable(struct lcd_info *lcd, int enable)
 
 static int dsim_write_hl_data(struct lcd_info *lcd, const u8 *cmd, u32 cmdSize)
 {
-	int ret = 0;
-	int retry = 5;
+	int ret;
+	int retry;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
-		return ret;
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
+		return 0;
+
+	retry = 5;
 
 try_write:
 	if (cmdSize == 1)
@@ -185,11 +184,11 @@ try_write:
 
 static int dsim_read_hl_data(struct lcd_info *lcd, u8 addr, u32 size, u8 *buf)
 {
-	int ret = 0;
+	int ret;
 	int retry = 4;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
 		return size;
 
 try_read:
@@ -658,9 +657,9 @@ static int s6e3aa2_read_id(struct lcd_info *lcd)
 	struct panel_private *priv = &lcd->dsim->priv;
 	int ret = 0;
 
-	ret = s6e3aa2_read_info(lcd, LDI_REG_ID, LDI_LEN_ID, lcd->id_info.id);
+	ret = s6e3aa2_read_info(lcd, LDI_REG_ID, LDI_LEN_ID, lcd->id);
 	if (ret < 0) {
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		dev_err(&lcd->ld->dev, "%s: fail\n", __func__);
 		goto exit;
 	}
@@ -1144,7 +1143,7 @@ static int s6e3aa2_probe(struct dsim_device *dsim)
 
 	dev_info(&lcd->ld->dev, "%s: was called\n", __func__);
 
-	priv->lcdConnected = 1;
+	priv->lcdConnected = PANEL_CONNECTED;
 
 	lcd->bd->props.max_brightness = EXTEND_BRIGHTNESS;
 	lcd->bd->props.brightness = UI_DEFAULT_BRIGHTNESS;
@@ -1162,14 +1161,14 @@ static int s6e3aa2_probe(struct dsim_device *dsim)
 	lcd->opr_table = OPR_TABLE;
 	lcd->aor_table = AOR_TABLE;
 
-	if (!lcdtype) {
-		priv->lcdConnected = 0;
+	if (lcdtype == PANEL_DISCONNEDTED) {
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		dev_err(&lcd->ld->dev, "%s: lcd was not connected\n", __func__);
 		goto exit;
 	}
 
 	ret = s6e3aa2_read_init_info(lcd, mtp);
-	if (!priv->lcdConnected) {
+	if (priv->lcdConnected == PANEL_DISCONNEDTED) {
 		dev_err(&lcd->ld->dev, "%s: lcd was not connected\n", __func__);
 		goto exit;
 	}
@@ -1253,8 +1252,8 @@ static int s6e3aa2_enteralpm(struct lcd_info *lcd)
 	DSI_WRITE(SEQ_TEST_KEY_ON_F0, ARRAY_SIZE(SEQ_TEST_KEY_ON_F0));
 	DSI_WRITE(SEQ_TEST_KEY_ON_FC, ARRAY_SIZE(SEQ_TEST_KEY_ON_FC));
 
-	if(!IS_ALPM_SUPPORTED(lcd->id_info.id[2])) {
-		dev_info(&lcd->ld->dev, "%s: Panel doesn't support ALPM/HLPM. id = 0x%02x %d\n", __func__, lcd->id_info.id[2],lcd->alpm);
+	if(!IS_ALPM_SUPPORTED(lcd->id[2])) {
+		dev_info(&lcd->ld->dev, "%s: Panel doesn't support ALPM/HLPM. id = 0x%02x %d\n", __func__, lcd->id[2],lcd->alpm);
 		lcd->alpm = 0;
 	}
 
@@ -1311,7 +1310,7 @@ static ssize_t lcd_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "SDC_%02X%02X%02X\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "SDC_%02X%02X%02X\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -1321,7 +1320,7 @@ static ssize_t window_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "%x %x %x\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "%x %x %x\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -1602,11 +1601,6 @@ static ssize_t dump_register_show(struct device *dev,
 			ret = dsim_read_hl_data_offset(lcd, reg, len, dump, offset);
 		else
 			ret = dsim_read_hl_data(lcd, reg, len, dump);
-
-		if (ret < 0) {
-			dev_err(&lcd->ld->dev, "%s: failed to read, %x, %d, %d\n", __func__, reg, len, offset);
-			goto exit;
-		}
 
 		DSI_WRITE(SEQ_TEST_KEY_OFF_F0, ARRAY_SIZE(SEQ_TEST_KEY_OFF_F0));
 		DSI_WRITE(SEQ_TEST_KEY_OFF_FC, ARRAY_SIZE(SEQ_TEST_KEY_OFF_FC));
@@ -1926,12 +1920,7 @@ static void lcd_init_svc(struct lcd_info *lcd)
 	dev_set_name(dev, "OCTA");
 	dev_set_drvdata(dev, lcd);
 	ret = device_register(dev);
-	if (ret < 0) {
-		dev_info(&lcd->ld->dev, "%s: device_register fail\n", __func__);
-		return;
-	}
-
-	device_create_file(dev, &dev_attr_SVC_OCTA);
+	ret = device_create_file(dev, &dev_attr_SVC_OCTA);
 
 	if (kn)
 		kernfs_put(kn);
@@ -2021,7 +2010,7 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 	mutex_init(&lcd->lock);
 
 	ret = s6e3aa2_probe(dsim);
-	if (ret < 0) {
+	if (ret) {
 		dev_err(&lcd->ld->dev, "%s: failed to probe panel\n", __func__);
 		goto probe_err;
 	}

@@ -37,7 +37,7 @@
 #define LEVEL_IS_ACL_OFF(brightness)		(brightness >= UI_MAX_BRIGHTNESS)
 
 #define DSI_WRITE(cmd, size)		do {				\
-	ret |= dsim_write_hl_data(lcd, cmd, size);			\
+	ret = dsim_write_hl_data(lcd, cmd, size);			\
 	if (ret < 0) {							\
 		dev_err(&lcd->ld->dev, "%s: failed to write %s\n", __func__, #cmd);	\
 		ret = -EPERM;						\
@@ -110,10 +110,7 @@ struct lcd_info {
 	int				temperature;
 	unsigned int			temperature_index;
 
-	union {
-		u32			value;
-		unsigned char		id[LDI_LEN_ID];
-	} id_info;
+	unsigned char			id[LDI_LEN_ID];
 	unsigned char			code[LDI_LEN_CHIP_ID];
 	unsigned char			date[LDI_LEN_DATE];
 	unsigned int			coordinate[2];
@@ -146,12 +143,14 @@ struct lcd_info {
 
 static int dsim_write_hl_data(struct lcd_info *lcd, const u8 *cmd, u32 cmdSize)
 {
-	int ret = 0;
-	int retry = 5;
+	int ret;
+	int retry;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
-		return ret;
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
+		return cmdSize;
+
+	retry = 5;
 
 try_write:
 	if (cmdSize == 1)
@@ -173,11 +172,11 @@ try_write:
 
 static int dsim_read_hl_data(struct lcd_info *lcd, u8 addr, u32 size, u8 *buf)
 {
-	int ret = 0;
+	int ret;
 	int retry = 4;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
 		return size;
 
 try_read:
@@ -689,9 +688,9 @@ static int s6e3fa3_read_id(struct lcd_info *lcd)
 	struct panel_private *priv = &lcd->dsim->priv;
 	int ret = 0;
 
-	ret = s6e3fa3_read_info(lcd, LDI_REG_ID, LDI_LEN_ID, lcd->id_info.id);
+	ret = s6e3fa3_read_info(lcd, LDI_REG_ID, LDI_LEN_ID, lcd->id);
 	if (ret < 0) {
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		dev_err(&lcd->ld->dev, "%s: fail\n", __func__);
 		goto exit;
 	}
@@ -985,41 +984,33 @@ static int s6e3fa3_exit(struct lcd_info *lcd)
 	int ret = 0;
 #ifdef CONFIG_DISPLAY_USE_INFO
 	u8 buf;
-	u8 esd_err = 0;
 #endif
 
 	dev_info(&lcd->ld->dev, "%s\n", __func__);
 
 #ifdef CONFIG_DISPLAY_USE_INFO
-	DSI_WRITE(SEQ_TEST_KEY_ON_F0, ARRAY_SIZE(SEQ_TEST_KEY_ON_F0));
-	DSI_WRITE(SEQ_VLIN1_MONITOR_ON, ARRAY_SIZE(SEQ_VLIN1_MONITOR_ON));
+/*
+* ESD_ERROR[6] =  MIPI DSI error is occurred by ESD.
+* ESD_ERROR[5] =  HS CLK lane error is occurred by ESD.
+* ESD_ERROR[4] =  VLIN3 error is occurred by ESD.
+* ESD_ERROR[3] =  ELVDD error is occurred by ESD.
+* ESD_ERROR[2]  = CHECK_SUM error is occurred by ESD.
+* ESD_ERROR[1] =  HSYNC error is occurred by ESD.
+* ESD_ERROR[0] =  VLIN1 error is occurred by ESD
+*/
 	ret = s6e3fa3_read_info(lcd, ERR_READ_REG, sizeof(buf), &buf);
 	if (ret < 0) {
 		dev_err(&lcd->ld->dev, "%s: fail\n", __func__);
 		goto dpui_skip;
 	}
-	inc_dpui_u32_field(DPUI_KEY_PNVLI1E, buf != 0 ? 1 : 0);
-	esd_err |= buf;
+	
+	inc_dpui_u32_field(DPUI_KEY_PNVLI1E, !!(buf & 0x01));
 
-	DSI_WRITE(SEQ_ELVDD_MONITOR_ON, ARRAY_SIZE(SEQ_ELVDD_MONITOR_ON));
-	ret = s6e3fa3_read_info(lcd, ERR_READ_REG, sizeof(buf), &buf);
-	if (ret < 0) {
-		dev_err(&lcd->ld->dev, "%s: fail\n", __func__);
-		goto dpui_skip;
-	}
-	inc_dpui_u32_field(DPUI_KEY_PNELVDE, buf != 0 ? 1 : 0);
-	esd_err |= buf;
+	inc_dpui_u32_field(DPUI_KEY_PNELVDE, !!(buf & 0x08));
 
-	DSI_WRITE(SEQ_VLOUT3_MONITOR_ON, ARRAY_SIZE(SEQ_VLOUT3_MONITOR_ON));
-	ret = s6e3fa3_read_info(lcd, ERR_READ_REG, sizeof(buf), &buf);
-	if (ret < 0) {
-		dev_err(&lcd->ld->dev, "%s: fail\n", __func__);
-		goto dpui_skip;
-	}
-	inc_dpui_u32_field(DPUI_KEY_PNVLO3E, buf != 0 ? 1 : 0);
-	esd_err |= buf;
+	inc_dpui_u32_field(DPUI_KEY_PNVLO3E, !!(buf & 0x10));
 
-	inc_dpui_u32_field(DPUI_KEY_PNESDE, esd_err != 0 ? 1 : 0);
+	inc_dpui_u32_field(DPUI_KEY_PNESDE, !!(buf & 0x19));
 
 	ret = s6e3fa3_read_info(lcd, ERR_RDNUMED_REG, sizeof(buf), &buf);
 	if (ret < 0) {
@@ -1057,9 +1048,9 @@ static int s6e3fa3_displayon(struct lcd_info *lcd)
 	/* 14. Display On(29h) */
 	DSI_WRITE(SEQ_DISPLAY_ON, ARRAY_SIZE(SEQ_DISPLAY_ON));
 
-	msleep(10);
+	// msleep(10);
 
-	DSI_WRITE(SEC_NORM_MODE_ON, ARRAY_SIZE(SEC_NORM_MODE_ON));
+	// DSI_WRITE(SEC_NORM_MODE_ON, ARRAY_SIZE(SEC_NORM_MODE_ON));
 exit:
 	return ret;
 }
@@ -1073,15 +1064,22 @@ static int s6e3fa3_init(struct lcd_info *lcd)
 
 	dev_info(&lcd->ld->dev, "%s\n", __func__);
 
+	msleep(5);
 	/* 7. Sleep Out(11h) */
 	DSI_WRITE(SEQ_SLEEP_OUT, ARRAY_SIZE(SEQ_SLEEP_OUT));
 
 	/* 8. Wait 20ms */
 	msleep(20);
 
+	/* ELVSS temporary setting*/
+	DSI_WRITE(SEQ_TEST_KEY_ON_F0, ARRAY_SIZE(SEQ_TEST_KEY_ON_F0));
+	DSI_WRITE(SEQ_ELVSSTEMPSET_1, ARRAY_SIZE(SEQ_ELVSSTEMPSET_1));
+	DSI_WRITE(SEQ_ELVSSTEMPSET_2, ARRAY_SIZE(SEQ_ELVSSTEMPSET_2));
+	DSI_WRITE(SEQ_TEST_KEY_OFF_F0, ARRAY_SIZE(SEQ_TEST_KEY_OFF_F0));
+	msleep(40);
 	/* Partial mode on, Partial Area Setting */
-	DSI_WRITE(SEQ_PARTIAL_ON, ARRAY_SIZE(SEQ_PARTIAL_ON));
-	DSI_WRITE(SEQ_PARTIAL_SETTING, ARRAY_SIZE(SEQ_PARTIAL_SETTING));
+	// DSI_WRITE(SEQ_PARTIAL_ON, ARRAY_SIZE(SEQ_PARTIAL_ON));
+	// DSI_WRITE(SEQ_PARTIAL_SETTING, ARRAY_SIZE(SEQ_PARTIAL_SETTING));
 
 	/* 9. ID READ */
 	s6e3fa3_read_id(lcd);
@@ -1107,21 +1105,19 @@ static int s6e3fa3_init(struct lcd_info *lcd)
 	/* 4.1.2 AVC Setting */
 	DSI_WRITE(SEQ_AVC_SETTING_1, ARRAY_SIZE(SEQ_AVC_SETTING_1));
 	DSI_WRITE(SEQ_AVC_SETTING_2, ARRAY_SIZE(SEQ_AVC_SETTING_2));
-
+	msleep(50);
 	dsim_panel_set_brightness(lcd, 1);
 #ifdef CONFIG_DISPLAY_USE_INFO
+	DSI_WRITE(SEQ_ESD_MONITOR_ON, ARRAY_SIZE(SEQ_ESD_MONITOR_ON));
 	ret = s6e3fa3_read_info(lcd, ERR_RDDSDR_REG, sizeof(buf), &buf);
 	if (ret < 0) {
 		dev_err(&lcd->ld->dev, "%s: fail\n", __func__);
 	}
-	inc_dpui_u32_field(DPUI_KEY_PNSDRE, buf&0x80 ? 1 : 0);
+	inc_dpui_u32_field(DPUI_KEY_PNSDRE, buf&0x80 ? 0 : 1);
 #endif
 	/* Test Key Disable */
 	DSI_WRITE(SEQ_TEST_KEY_OFF_F0, ARRAY_SIZE(SEQ_TEST_KEY_OFF_F0));
 	DSI_WRITE(SEQ_TEST_KEY_OFF_FC, ARRAY_SIZE(SEQ_TEST_KEY_OFF_FC));
-
-	/* 12. Wait 80ms */
-	msleep(50);
 
 #ifdef CONFIG_LCD_DOZE_MODE
 	lcd->current_alpm = ALPM_OFF;
@@ -1176,11 +1172,11 @@ static int panel_dpui_notifier_callback(struct notifier_block *self,
 			lcd->date[2] & 0x1F, lcd->date[3] & 0x3F, lcd->date[4] & 0x3F);
 	set_dpui_field(DPUI_KEY_MAID_DATE, tbuf, size);
 
-	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%d", lcd->id_info.id[0]);
+	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%d", lcd->id[0]);
 	set_dpui_field(DPUI_KEY_LCDID1, tbuf, size);
-	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%d", lcd->id_info.id[1]);
+	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%d", lcd->id[1]);
 	set_dpui_field(DPUI_KEY_LCDID2, tbuf, size);
-	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%d", lcd->id_info.id[2]);
+	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%d", lcd->id[2]);
 	set_dpui_field(DPUI_KEY_LCDID3, tbuf, size);
 	size = snprintf(tbuf, MAX_DPUI_VAL_LEN, "%s_%s", DPUI_VENDOR_NAME, DPUI_MODEL_NAME);
 	set_dpui_field(DPUI_KEY_DISP_MODEL, tbuf, size);
@@ -1202,7 +1198,7 @@ static int s6e3fa3_probe(struct dsim_device *dsim)
 
 	dev_info(&lcd->ld->dev, "%s: was called\n", __func__);
 
-	priv->lcdConnected = 1;
+	priv->lcdConnected = PANEL_CONNECTED;
 
 	lcd->bd->props.max_brightness = EXTEND_BRIGHTNESS;
 	lcd->bd->props.brightness = UI_DEFAULT_BRIGHTNESS;
@@ -1225,7 +1221,7 @@ static int s6e3fa3_probe(struct dsim_device *dsim)
 	lcd->tset_param = SEQ_TSET_SETTING;
 
 	ret = s6e3fa3_read_init_info(lcd, mtp);
-	if (!priv->lcdConnected) {
+	if (priv->lcdConnected == PANEL_DISCONNEDTED) {
 		dev_err(&lcd->ld->dev, "%s: lcd was not connected\n", __func__);
 		goto exit;
 	}
@@ -1349,7 +1345,7 @@ static int s6e3fa3_exitalpm(struct lcd_info *lcd)
 
 	DSI_WRITE(SEQ_TEST_KEY_ON_F0, ARRAY_SIZE(SEQ_TEST_KEY_ON_F0));
 	DSI_WRITE(SEQ_TEST_KEY_ON_FC, ARRAY_SIZE(SEQ_TEST_KEY_ON_FC));
-
+	DSI_WRITE(SEQ_ELVSSTEMPSET_1, ARRAY_SIZE(SEQ_ELVSSTEMPSET_1));
 	DSI_WRITE(SEQ_ALPM_OFF, ARRAY_SIZE(SEQ_ALPM_OFF));
 	DSI_WRITE(SEQ_LTPS_EQ_NORMAL, ARRAY_SIZE(SEQ_LTPS_EQ_NORMAL));
 
@@ -1371,7 +1367,7 @@ static ssize_t lcd_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "SDC_%02X%02X%02X\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "SDC_%02X%02X%02X\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -1381,7 +1377,7 @@ static ssize_t window_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "%x %x %x\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "%x %x %x\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -1662,11 +1658,6 @@ static ssize_t dump_register_show(struct device *dev,
 			ret = dsim_read_hl_data_offset(lcd, reg, len, dump, offset);
 		else
 			ret = dsim_read_hl_data(lcd, reg, len, dump);
-
-		if (ret < 0) {
-			dev_err(&lcd->ld->dev, "%s: failed to read, %x, %d, %d\n", __func__, reg, len, offset);
-			goto exit;
-		}
 
 		DSI_WRITE(SEQ_TEST_KEY_OFF_F0, ARRAY_SIZE(SEQ_TEST_KEY_OFF_F0));
 		DSI_WRITE(SEQ_TEST_KEY_OFF_FC, ARRAY_SIZE(SEQ_TEST_KEY_OFF_FC));
@@ -2023,11 +2014,10 @@ static void lcd_init_svc(struct lcd_info *lcd)
 	dev_set_name(dev, "OCTA");
 	dev_set_drvdata(dev, lcd);
 	ret = device_register(dev);
-	if (ret < 0) {
+	if (ret) {
 		dev_info(&lcd->ld->dev, "%s: device_register fail\n", __func__);
 		return;
 	}
-
 	device_create_file(dev, &dev_attr_SVC_OCTA);
 
 	if (kn)
@@ -2136,7 +2126,7 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 	mutex_init(&lcd->lock);
 
 	ret = s6e3fa3_probe(dsim);
-	if (ret < 0) {
+	if (ret) {
 		dev_err(&lcd->ld->dev, "%s: failed to probe panel\n", __func__);
 		goto probe_err;
 	}

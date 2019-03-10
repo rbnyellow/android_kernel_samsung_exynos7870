@@ -42,10 +42,7 @@ struct lcd_info {
 	int				temperature;
 	unsigned int			temperature_index;
 
-	union {
-		u32			value;
-		unsigned char		id[S6D7AA0_ID_LEN];
-	} id_info;
+	unsigned char			id[3];
 	unsigned char			dump_info[3];
 
 	struct dsim_device		*dsim;
@@ -60,12 +57,14 @@ struct lcd_info {
 
 static int dsim_write_hl_data(struct lcd_info *lcd, const u8 *cmd, u32 cmdSize)
 {
-	int ret = 0;
-	int retry = 5;
+	int ret;
+	int retry;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
-		return ret;
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
+		return cmdSize;
+
+	retry = 5;
 
 try_write:
 	if (cmdSize == 1)
@@ -87,11 +86,11 @@ try_write:
 
 static int dsim_read_hl_data(struct lcd_info *lcd, u8 addr, u32 size, u8 *buf)
 {
-	int ret = 0;
+	int ret;
 	int retry = 4;
 	struct panel_private *priv = &lcd->dsim->priv;
 
-	if (!priv->lcdConnected)
+	if (priv->lcdConnected == PANEL_DISCONNEDTED)
 		return size;
 
 try_read:
@@ -172,20 +171,20 @@ static int s6d7aa0_read_init_info(struct lcd_info *lcd)
 	struct panel_private *priv = &lcd->dsim->priv;
 	int i = 0;
 
-	dev_info(&lcd->ld->dev, "%s\n", __func__);
+	dev_info(&lcd->ld->dev, "MDD : %s was called\n", __func__);
 
 	if (lcdtype == 0) {
-		priv->lcdConnected = 0;
+		priv->lcdConnected = PANEL_DISCONNEDTED;
 		goto read_exit;
 	}
 
-	lcd->id_info.id[0] = (lcdtype & 0xFF0000) >> 16;
-	lcd->id_info.id[1] = (lcdtype & 0x00FF00) >> 8;
-	lcd->id_info.id[2] = (lcdtype & 0x0000FF) >> 0;
+	lcd->id[0] = (lcdtype & 0xFF0000) >> 16;
+	lcd->id[1] = (lcdtype & 0x00FF00) >> 8;
+	lcd->id[2] = (lcdtype & 0x0000FF) >> 0;
 
 	dev_info(&lcd->ld->dev, "READ ID : ");
 	for (i = 0; i < S6D7AA0_ID_LEN; i++)
-		dev_info(&lcd->ld->dev, "%02x, ", lcd->id_info.id[i]);
+		dev_info(&lcd->ld->dev, "%02x, ", lcd->id[i]);
 	dev_info(&lcd->ld->dev, "\n");
 
 read_exit:
@@ -338,7 +337,7 @@ static int s6d7aa0_probe(struct dsim_device *dsim)
 
 	dev_info(&lcd->ld->dev, "%s: was called\n", __func__);
 
-	priv->lcdConnected = 1;
+	priv->lcdConnected = PANEL_CONNECTED;
 
 	lcd->bd->props.max_brightness = UI_MAX_BRIGHTNESS;
 	lcd->bd->props.brightness = UI_DEFAULT_BRIGHTNESS;
@@ -352,8 +351,8 @@ static int s6d7aa0_probe(struct dsim_device *dsim)
 	lcd->siop_enable = 0;
 
 	s6d7aa0_read_init_info(lcd);
-	if (!priv->lcdConnected) {
-		dev_err(&lcd->ld->dev, "%s: lcd was not connected\n", __func__);
+	if (priv->lcdConnected == PANEL_DISCONNEDTED) {
+		dev_err(&lcd->ld->dev, "dsim : %s lcd was not connected\n", __func__);
 		goto exit;
 	}
 
@@ -368,7 +367,7 @@ static ssize_t lcd_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "BOE_%02X%02X%02X\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "BOE_%02X%02X%02X\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -378,7 +377,7 @@ static ssize_t window_type_show(struct device *dev,
 {
 	struct lcd_info *lcd = dev_get_drvdata(dev);
 
-	sprintf(buf, "%x %x %x\n", lcd->id_info.id[0], lcd->id_info.id[1], lcd->id_info.id[2]);
+	sprintf(buf, "%x %x %x\n", lcd->id[0], lcd->id[1], lcd->id[2]);
 
 	return strlen(buf);
 }
@@ -450,14 +449,35 @@ static ssize_t power_reduce_store(struct device *dev,
 	return size;
 }
 
+static ssize_t temperature_show(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	char temp[] = "-20, -19, 0, 1\n";
+
+	strcat(buf, temp);
+	return strlen(buf);
+}
+
+static ssize_t temperature_store(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t size)
+{
+	int value, rc = 0;
+
+	rc = kstrtoint(buf, 10, &value);
+
+	return size;
+}
+
 static DEVICE_ATTR(lcd_type, 0444, lcd_type_show, NULL);
 static DEVICE_ATTR(window_type, 0444, window_type_show, NULL);
 static DEVICE_ATTR(siop_enable, 0664, siop_enable_show, siop_enable_store);
 static DEVICE_ATTR(power_reduce, 0664, power_reduce_show, power_reduce_store);
+static DEVICE_ATTR(temperature, 0664, temperature_show, temperature_store);
 
 static struct attribute *lcd_sysfs_attributes[] = {
 	&dev_attr_siop_enable.attr,
 	&dev_attr_power_reduce.attr,
+	&dev_attr_temperature.attr,
 	&dev_attr_lcd_type.attr,
 	&dev_attr_window_type.attr,
 	NULL,
@@ -567,7 +587,7 @@ static int dsim_panel_probe(struct dsim_device *dsim)
 	mutex_init(&lcd->lock);
 
 	ret = s6d7aa0_probe(dsim);
-	if (ret < 0) {
+	if (ret) {
 		dev_err(&lcd->ld->dev, "%s: failed to probe panel\n", __func__);
 		goto probe_err;
 	}
